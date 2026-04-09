@@ -1,0 +1,247 @@
+library(dplyr)
+library(caret)
+
+athletes <- read.csv("athlete_events.csv", stringsAsFactors = FALSE)
+regions <- read.csv("noc_regions.csv", stringsAsFactors = FALSE)
+
+winter_data <- athletes %>%
+  filter(Season == "Winter",
+         Year >= 1992,
+         Year <= 2014) %>%
+  select(Sex, Age, Height, Weight, Year, Sport, Medal)
+
+winter_data
+
+winter_data$Medal[is.na(winter_data$Medal)] <- "None"
+
+winter_data <- winter_data %>%
+  filter(!is.na(Age),
+         !is.na(Height),
+         !is.na(Weight))
+
+winter_data$Sex <- ifelse(winter_data$Sex == "M", 1, 0)
+
+winter_data$Medal <- factor(winter_data$Medal,
+                            levels = c("None","Bronze","Silver","Gold"))
+sport_dummies <- model.matrix(~ Sport - 1, data = winter_data)
+
+winter_data <- cbind(winter_data[,c("Sex","Age","Height","Weight","Year","Medal")],
+                     sport_dummies)
+
+train_data <- winter_data %>% filter(Year >= 1992 & Year <= 2006)
+valid_data <- winter_data %>% filter(Year == 2010)
+test_data  <- winter_data %>% filter(Year == 2014)
+
+X_train <- train_data %>% select(-Medal)
+X_valid <- valid_data %>% select(-Medal)
+X_test  <- test_data %>% select(-Medal)
+
+y_train <- train_data$Medal
+y_valid <- valid_data$Medal
+y_test  <- test_data$Medal
+
+train_means <- sapply(X_train, mean)
+train_sds <- sapply(X_train, sd)
+
+train_sds[train_sds == 0] <- 1
+
+scale_data <- function(df, means, sds){
+  df <- sweep(df, 2, means, "-")
+  df <- sweep(df, 2, sds, "/")
+  return(df)
+}
+
+X_train <- scale_data(X_train, train_means, train_sds)
+X_valid <- scale_data(X_valid, train_means, train_sds)
+X_test  <- scale_data(X_test, train_means, train_sds)
+
+weighted_knn <- function(train_X, train_y, test_X, k = 5, p = 2){
+  train_X <- as.matrix(train_X)
+  test_X <- as.matrix(test_X)
+  
+  preds <- c()
+  
+  for(i in 1:nrow(test_X)){
+    
+    dists <- apply(train_X,1,function(row){
+      sum(abs(row - test_X[i,])^p)^(1/p)
+    })
+    
+    idx <- order(dists)[1:k]
+    
+    nn_labels <- train_y[idx]
+    nn_dists <- dists[idx]
+    
+    weights <- 1/(nn_dists + 1e-8)
+    
+    vote <- tapply(weights, nn_labels, sum)
+    
+    pred <- names(vote)[which.max(vote)]
+    
+    preds <- c(preds, pred)
+  }
+  
+  return(factor(preds, levels=levels(train_y)))
+}
+
+
+k_values <- c(3,5,7,9,11,15)
+
+results <- data.frame()
+
+for(k in k_values){
+  
+  cat("Running k =", k, "\n")
+  
+  pred <- weighted_knn(X_train, y_train, X_valid, k=k, p=2)
+  
+  cm <- confusionMatrix(pred, y_valid)
+  
+  results <- rbind(results,
+                   data.frame(k=k,
+                              Accuracy=cm$overall["Accuracy"]))
+}
+
+results
+
+best_k <- results$k[which.max(results$Accuracy)]
+best_k
+ 
+pred_test <- weighted_knn(X_train, y_train, X_test, k = best_k, p = 2)
+
+cm_test <- confusionMatrix(pred_test, y_test)
+cm_test
+
+accuracy <- cm_test$overall["Accuracy"]
+accuracy
+
+precision <- cm_test$byClass[, "Precision"]
+recall <- cm_test$byClass[, "Recall"]
+f1 <- cm_test$byClass[, "F1"]
+
+precision
+recall
+f1
+
+final_results <- data.frame(
+  Metric = c("Accuracy"),
+  Value = c(as.numeric(accuracy))
+)
+
+final_results
+
+class_metrics <- data.frame(
+  Class = rownames(cm_test$byClass),
+  Precision = cm_test$byClass[, "Precision"],
+  Recall = cm_test$byClass[, "Recall"],
+  F1 = cm_test$byClass[, "F1"]
+)
+
+class_metrics
+
+results_manhattan <- data.frame()
+
+for(k in k_values){
+  
+  cat("Running Manhattan k =", k, "\n")
+  
+  pred <- weighted_knn(X_train, y_train, X_valid, k = k, p = 1)
+  
+  cm <- confusionMatrix(pred, y_valid)
+  
+  results_manhattan <- rbind(results_manhattan,
+                             data.frame(k = k,
+                                        Accuracy = cm$overall["Accuracy"]))
+}
+
+results_manhattan
+
+best_k_manhattan <- results_manhattan$k[which.max(results_manhattan$Accuracy)]
+best_k_manhattan
+
+pred_test <- weighted_knn(X_train, y_train, X_test, k = best_k, p = 2)
+cm_test <- confusionMatrix(pred_test, y_test)
+
+cm_test
+
+accuracy <- cm_test$overall["Accuracy"]
+
+class_metrics <- data.frame(
+  Class = rownames(cm_test$byClass),
+  Precision = cm_test$byClass[, "Precision"],
+  Recall = cm_test$byClass[, "Recall"],
+  F1 = cm_test$byClass[, "F1"]
+)
+
+accuracy
+class_metrics
+
+pred_binary <- ifelse(pred_test == "None", 0, 1) 
+true_binary <- ifelse(y_test == "None", 0, 1)
+
+sex_group <- test_data$Sex 
+
+fairness_df <- data.frame(
+  Sex = sex_group,
+  Pred = pred_binary,
+  True = true_binary
+)
+ 
+  fairness_df$SexLabel <- ifelse(fairness_df$Sex == 1, "Male", "Female")
+
+demographic_parity <- fairness_df %>%
+    group_by(SexLabel) %>% summarise (
+      Positive_Prediction_Rate = mean (Pred == 1))
+
+demographic_parity
+
+
+equal_opportunity <- fairness_df %>%
+  filter (True == 1) %>% 
+  group_by (SexLabel) %>%
+  summarise (
+    True_Positive_Rate = mean (Pred == 1)
+  )
+
+equal_opportunity
+
+predictive_parity <- fairness_df %>%
+  filter (Pred == 1) %>% 
+  group_by (SexLabel) %>% 
+  summarise(Precision = mean (True == 1))
+
+predictive_parity
+
+male_rate <- fairness_df %>% 
+  filter(SexLabel == "Male") %>%
+  summarise (rate = mean (Pred == 1)) %>%
+  pull(rate)
+
+female_rate <- fairness_df %>%
+  filter(SexLabel == "Female") %>%
+  summarise (rate = mean (Pred == 1)) %>%
+  pull(rate)
+disparate_impact <- female_rate / male_rate
+disparate_impact
+
+fairness_summary <- data.frame(
+  Metric = c(
+    "Demographic Parity - Male",
+    "Demographic Parity - Female",
+    "Equal Opportunity - Male",
+    "Equal Opportunity - Female",
+    "Predictive Parity - Male",
+    "Predictive Parity - Female",
+    "Disparate Impact (Female / Male)" 
+),
+    Value = c(
+      demographic_parity$Positive_Prediction_Rate[demographic_parity$SexLabel == "Male"],
+      demographic_parity$Positive_Prediction_Rate[demographic_parity$SexLabel == "Female"],
+      equal_opportunity$True_Positive_Rate[equal_opportunity$SexLabel == "Male"],
+      equal_opportunity$True_Positive_Rate[equal_opportunity$SexLabel == "Female"],
+      predictive_parity$Precision[predictive_parity$SexLabel == "Male"], 
+      predictive_parity$Precision[predictive_parity$SexLabel == "Female"], 
+      disparate_impact
+    )
+)
+fairness_summary
