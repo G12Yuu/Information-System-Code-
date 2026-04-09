@@ -1,4 +1,5 @@
 Ryan's code for binary model 
+
 # Cleaning Data
 
 data <- read.csv("athlete_events.csv")
@@ -180,6 +181,14 @@ recall_test
 f1_test <- 2 * (precision_test * recall_test) / (precision_test + recall_test)
 f1_test
 
+# Entropy now for binary validation
+
+val_prob <- prop.table(conf_validation)
+val_prob
+
+entropy_val <- - sum(val_prob * log2(val_prob))
+entropy_val
+
 
 # Fairness
 table(winter_data$Sex, winter_data$Medal)
@@ -191,7 +200,6 @@ tpr_female <- sum(pred_validation[validation_set$Sex == 1] == "Yes" & validation
   sum(validation_class[validation_set$Sex == 1] == "Yes")
 equal_opportunity_knn <- abs(tpr_male - tpr_female)
 equal_opportunity_knn
-
 
 ### Next Setp - Multiclass from actual medal winners
 
@@ -244,10 +252,18 @@ tree_val <- predict(decision_tree, newdata = winners_val_set,
 winner_conf_val <- table(Predicted = tree_val, Actual = actual_winners_2010$Medal)
 winner_conf_val
 
+
+
 tree_test <- predict(decision_tree, newdata = winners_test_set, 
                      type = "class")
 winner_conf_test <- table(Predicted = tree_test, Actual = actual_winners_2014$Medal)
 winner_conf_test
+
+
+
+
+
+
 
 
 
