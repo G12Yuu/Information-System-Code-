@@ -1,0 +1,256 @@
+Ryan's code for binary model 
+# Cleaning Data
+
+data <- read.csv("athlete_events.csv")
+data_2 <- data[data$Season == "Winter",]
+data_3 <- data_2[data_2$Year >= 1990,]
+
+winter_data <- data_3[, c("Sex", "Age", "Height", 
+                          "Weight", "Year", "Sport",
+                          "Medal")]
+rownames(winter_data) <- 1:nrow(winter_data)
+
+nrow(winter_data)
+
+# Fixing missing NA values
+winter_data$Medal[is.na(winter_data$Medal)] <- "None"
+colSums(is.na(winter_data))
+winter_data <- winter_data[complete.cases(winter_data), ]
+
+# Exploratory Analysis
+
+summary(winter_data)
+
+par(mfrow=c(1, 3))
+hist(winter_data$Age, xlab="Age", main="Age Distribution", col = "coral4")
+hist(winter_data$Height, xlab = "Height", main ="Height Distribution", col = "coral3")
+hist(winter_data$Weight, xlab="Weight", main="Weight Distribution", col = "coral2")
+
+table(winter_data$Medal)
+
+barplot(table(winter_data$Medal), col=c("brown", "gold", "black", "gray"), #
+        main="Class Imbalance")
+
+table(winter_data$Sex, winter_data$Medal)
+table(winter_data$Sport, winter_data$Medal)
+
+par(mfrow=c(1, 3))
+boxplot(Age ~ Medal, winter_data, main="Medals vs Age", col = "burlywood4")
+boxplot(Height ~ Medal, winter_data, main = "Medals vs Height", col = "burlywood3")
+boxplot(Weight ~ Medal, winter_data, main="Medals vs Weight", col = "burlywood2")
+
+library(corrplot)
+matrix <- cor(winter_data[,1:6])
+corrplot(matrix)
+
+# Entropy of medal distributions
+
+probability_medal <- prop.table(table(winter_data$Medal))
+probability_medal
+
+entropy <- - sum(probability_medal * log2(probability_medal))
+entropy
+
+# Changing into binary variables for KNN
+
+winter_data$Sex <- ifelse(winter_data$Sex == "M", 1, 0)
+winter_data$Sport <- as.numeric(as.factor(winter_data$Sport))
+
+# Set Target Variable for Binary
+
+binary_class <- as.factor(ifelse(winter_data$Medal == "None", "No", "Yes"))
+
+# Split into training, test, validation
+
+training_set <- winter_data[winter_data$Year >= 1992 & 
+                              winter_data$Year <= 2006, 
+                            c("Sex", "Age", "Height", "Weight", "Year", "Sport")]
+validation_set <- winter_data[winter_data$Year == 2010, c("Sex", "Age", "Height", 
+                                                          "Weight", "Year", "Sport")]
+testing_set <- winter_data[winter_data$Year == 2014, c("Sex", "Age", "Height", 
+                                                      "Weight", "Year", "Sport")]
+
+# Create separate dataframe for the real classifications
+
+training_class <- binary_class[winter_data$Year >= 1992 & 
+                                 winter_data$Year <= 2006]
+validation_class <- binary_class[winter_data$Year == 2010]
+testing_class <- binary_class[winter_data$Year == 2014]
+
+# Scale dataset using training mean and sd
+
+scaled_training <- scale(training_set)
+mean <- attr(scaled_training, "scaled:center")
+sd <- attr(scaled_training, "scaled:scale")       
+
+scaled_validation <- scale(validation_set, center = mean, scale = sd)
+scaled_testing <- scale(testing_set, center = mean, scale = sd)
+
+# Use mean and sd to avoid data leakage
+
+# Binary KNN
+
+library(class)
+library(pROC)
+library(caret)
+
+# Choose k
+
+# Accuracy Graph
+
+library(ggplot2)
+k_values <- c(1, 3, 5, 7, 15, 19, 25, 35, 45, 50, 60, 70, 80, 90)
+accuracy_values <- sapply(k_values, function(k) {
+  classifier_knn <- knn(train = scaled_training,
+                        test = scaled_testing,
+                        cl = training_class,
+                        k=k)
+  1-mean(classifier_knn != training_class)
+})
+
+accuracy_data <- data.frame(K = k_values, Accuracy = accuracy_values)
+
+ggplot(accuracy_data, aes(x=K, y=Accuracy)) + 
+  geom_line(color="lightblue", size = 1) +
+  geom_point(color = "lightgreen", size = 3) + 
+  labs(title = "Model Accuracy for Different K Values", 
+       x = "Number of Neighbours (K)", 
+       y="Accuracy") + theme_minimal()
+
+# Elbow Plot 
+
+k_range <- 1:50
+error <- numeric(length(k_range))
+for(i in k_range)
+{
+  pred <- knn(scaled_training, scaled_validation, 
+              training_class, i)
+  error[i] <- 1-mean(pred == validation_class)
+}
+
+plot(k_range, error, type="b", pch=19, col="orangered", xlab="K Values", ylab="Error", 
+     main="Elbow Plot for Optimal K")
+
+## Valid > 30
+
+# Run on validation
+pred_validation <- knn(scaled_training, 
+                       scaled_validation, 
+                       training_class, 11)
+# Confusion Matrix
+conf_validation <- table(Predicted = pred_validation, Actual = validation_class)
+conf_validation
+
+# accuracy, precision, recall, f1 score
+accuracy_val <- (conf_validation["Yes", "Yes"] + conf_validation["No", "No"]) / 
+  sum(conf_validation)
+accuracy_val
+
+precision_val <- conf_validation["Yes", "Yes"] / (conf_validation["Yes", "Yes"]
+                                                  + conf_validation["Yes", "No"])
+precision_val
+
+recall_val <- conf_validation["Yes", "Yes"] / (conf_validation["Yes", "Yes"] + 
+                                                 conf_validation["No", "Yes"])
+recall_val
+
+f1_val <- 2 * (precision_val * recall_val) / (precision_val + recall_val)
+f1_val
+
+
+# Run on test
+pred_testing <- knn(scaled_training, scaled_testing, 
+                    training_class, 11)
+# Confusion Matrix
+conf_testing <- table(Predicted = pred_testing, Actual = testing_class)
+conf_testing
+
+accuracy_test <- (conf_testing["Yes", "Yes"] + conf_testing["No", "No"]) / 
+  sum(conf_testing)
+accuracy_test
+
+precision_test <- conf_testing["Yes", "Yes"] / (conf_testing["Yes", "Yes"]
+                                                  + conf_testing["Yes", "No"])
+precision_test
+
+recall_test <- conf_testing["Yes", "Yes"] / (conf_testing["Yes", "Yes"] + 
+                                                 conf_testing["No", "Yes"])
+recall_test
+
+f1_test <- 2 * (precision_test * recall_test) / (precision_test + recall_test)
+f1_test
+
+
+# Fairness
+table(winter_data$Sex, winter_data$Medal)
+
+# Equal Opportunity (Sex)
+tpr_male <- sum(pred_validation[validation_set$Sex == 0] == "Yes" & validation_class[validation_set$Sex == 0] == "Yes") / 
+  sum(validation_class[validation_set$Sex == 0] == "Yes")
+tpr_female <- sum(pred_validation[validation_set$Sex == 1] == "Yes" & validation_class[validation_set$Sex == 1] == "Yes") / 
+  sum(validation_class[validation_set$Sex == 1] == "Yes")
+equal_opportunity_knn <- abs(tpr_male - tpr_female)
+equal_opportunity_knn
+
+
+### Next Setp - Multiclass from actual medal winners
+
+# Decision Tree to predict medal type for the actual winners
+
+library(nnet)
+library(rpart)
+
+actual_winners <- winter_data[winter_data$Medal != "None", ]
+table(actual_winners$Medal)
+
+actual_winners_2010 <- actual_winners[actual_winners$Year
+                                      ==2010, ]
+table(actual_winners_2010$Medal)
+
+actual_winners_2014 <- actual_winners[actual_winners$Year
+                                      ==2014, ]
+table(actual_winners_2014$Medal)
+
+
+# Decision tree
+
+winners_val_set <- winter_data[winter_data$Year == 2010 &
+                                 winter_data$Medal != "None", ]
+table(winners_val_set$Medal)
+
+winners_test_set <- winter_data[winter_data$Year == 2014 &
+                                  winter_data$Medal != "None", ]
+table(winners_test_set$Medal)
+
+decision_tree <- rpart(Medal ~ Sex + Age + Height + Weight
+                      + Sport + Year, 
+                      data = actual_winners, 
+                      method = "class", 
+                      control = rpart.control(cp =0.0035))
+# Choosing complexity value of 0.005 to see silver/gold/bronze
+
+medal_colours <- c("Bronze" = "brown", "Gold" = "gold", "Silver" = "grey")
+rpart.plot(decision_tree, box.col=medal_colours[decision_tree$frame$yval])
+
+# Check variable importance
+decision_tree$variable.importance
+# Height is most important, year is least
+
+# Evaluate performance
+
+# Predict medal type using validation.test
+tree_val <- predict(decision_tree, newdata = winners_val_set, 
+                    type = "class")
+winner_conf_val <- table(Predicted = tree_val, Actual = actual_winners_2010$Medal)
+winner_conf_val
+
+tree_test <- predict(decision_tree, newdata = winners_test_set, 
+                     type = "class")
+winner_conf_test <- table(Predicted = tree_test, Actual = actual_winners_2014$Medal)
+winner_conf_test
+
+
+
+
+
+
