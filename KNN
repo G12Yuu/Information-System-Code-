@@ -1,0 +1,148 @@
+
+data <- read.csv("athlete_events.csv")
+
+head(data)
+
+winter <- data[data$Season == "Winter", ]
+
+winter <- winter[winter$Year >= 1992 & winter$Year <= 2014, ]
+
+winter <- winter[, c("Sex","Age","Height","Weight","Year","Sport","Medal")]
+
+winter$Medal[is.na(winter$Medal)] <- "None"
+
+winter <- na.omit(winter)
+
+train <- winter[winter$Year <= 2006, ]
+validation <- winter[winter$Year == 2010, ]
+test <- winter[winter$Year == 2014, ]
+
+# Install package 
+
+library(fastDummies)
+
+train <- dummy_cols(train,
+                    select_columns = c("Sex","Sport"),
+                    remove_selected_columns = TRUE)
+
+validation <- dummy_cols(validation,
+                         select_columns = c("Sex","Sport"),
+                         remove_selected_columns = TRUE)
+
+test <- dummy_cols(test,
+                   select_columns = c("Sex","Sport"),
+                   remove_selected_columns = TRUE)
+
+train_labels <- train$Medal
+validation_labels <- validation$Medal
+
+train_features <- train[, colnames(train) != "Medal"]
+validation_features <- validation[, colnames(validation) != "Medal"]
+
+normalize <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+train_labels <- train$Medal
+validation_labels <- validation$Medal
+
+train_features <- train[, colnames(train) != "Medal"]
+validation_features <- validation[, colnames(validation) != "Medal"]
+
+train_min <- apply(train_features, 2, min)
+train_max <- apply(train_features, 2, max)
+
+train_norm <- as.data.frame(scale(train_features,
+                                  center = train_min,
+                                  scale = train_max - train_min))
+
+validation_norm <- as.data.frame(scale(validation_features,
+                                       center = train_min,
+                                       scale = train_max - train_min))
+
+library(class)
+
+knn_pred <- knn(
+  train = train_norm,
+  test = validation_norm,
+  cl = train_labels,
+  k = 5
+)
+
+mean(knn_pred == validation_labels)
+
+accuracy_results <- data.frame()
+
+for(i in 1:15){
+  
+  pred <- knn(
+    train = train_norm,
+    test = validation_norm,
+    cl = train_labels,
+    k = i
+  )
+  
+  acc <- mean(pred == validation_labels)
+  
+  accuracy_results <- rbind(
+    accuracy_results,
+    data.frame(k=i, accuracy=acc)
+  )
+  
+}
+
+accuracy_results
+
+test_labels <- test$Medal
+
+test_features <- test[, colnames(test) != "Medal"]
+
+test_norm <- as.data.frame(scale(test_features,
+                                 center = train_min,
+                                 scale = train_max - train_min))
+
+best_k <- 13   
+
+final_pred <- knn(
+  train = train_norm,
+  test = test_norm,
+  cl = train_labels,
+  k = best_k
+)
+
+final_accuracy <- mean(final_pred == test_labels)
+final_accuracy
+
+conf_matrix <- table(Predicted = final_pred, Actual = test_labels)
+conf_matrix
+
+library(caret)
+
+test_labels <- as.factor(test_labels)
+final_pred <- as.factor(final_pred)
+
+cm <- confusionMatrix(final_pred, test_labels)
+cm
+
+mean(final_pred == test_labels)
+
+library(kknn)
+
+train_knn <- winter[winter$Year <= 2006, ]
+validation_knn <- winter[winter$Year == 2010, ]
+
+train_knn$Medal <- as.factor(train_knn$Medal)
+validation_knn$Medal <- as.factor(validation_knn$Medal)
+
+knn_manhattan <- kknn(
+  Medal ~ .,
+  train = train_knn,
+  test = validation_knn,
+  k = best_k,
+  distance = 1
+)
+pred_manhattan <- fitted(knn_manhattan)
+
+mean(pred_manhattan == validation_knn$Medal)
+
+
