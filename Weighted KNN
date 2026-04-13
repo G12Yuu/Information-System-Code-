@@ -1,5 +1,8 @@
+Yudi's code for weighted knn
+
 library(dplyr)
 library(caret)
+library(ggplot2)
 
 athletes <- read.csv("athlete_events.csv", stringsAsFactors = FALSE)
 regions <- read.csv("noc_regions.csv", stringsAsFactors = FALSE)
@@ -72,7 +75,7 @@ weighted_knn <- function(train_X, train_y, test_X, k = 5, p = 2){
     nn_labels <- train_y[idx]
     nn_dists <- dists[idx]
     
-    weights <- 1/(nn_dists + 1e-8)
+    weights <- 1/((nn_dists)^2 + 1e-8)
     
     vote <- tapply(weights, nn_labels, sum)
     
@@ -85,7 +88,7 @@ weighted_knn <- function(train_X, train_y, test_X, k = 5, p = 2){
 }
 
 
-k_values <- c(3,5,7,9,11,15)
+k_values <- c(3, 5, 7, 9, 11, 15, 21, 25, 31)
 
 results <- data.frame()
 
@@ -97,9 +100,16 @@ for(k in k_values){
   
   cm <- confusionMatrix(pred, y_valid)
   
-  results <- rbind(results,
-                   data.frame(k=k,
-                              Accuracy=cm$overall["Accuracy"]))
+  metrics <- colMeans(cm$byClass, na.rm = TRUE)
+  
+  results <- rbind(results, data.frame(
+    k = k,
+    Accuracy = cm$overall["Accuracy"],
+    Precision = metrics["Precision"],
+    Recall = metrics["Recall"],
+    F1 = metrics["F1"]
+  ))
+
 }
 
 results
@@ -224,24 +234,81 @@ female_rate <- fairness_df %>%
 disparate_impact <- female_rate / male_rate
 disparate_impact
 
+get_val <- function(df, col, label) {
+  val <- df[[col]][df$SexLabel == label]
+  if (length(val) == 0) return(0) else return(val)
+}
+
 fairness_summary <- data.frame(
   Metric = c(
-    "Demographic Parity - Male",
-    "Demographic Parity - Female",
-    "Equal Opportunity - Male",
-    "Equal Opportunity - Female",
-    "Predictive Parity - Male",
-    "Predictive Parity - Female",
-    "Disparate Impact (Female / Male)" 
-),
-    Value = c(
+    "Demographic Parity Difference",
+    "Equal Opportunity Difference",
+    "Predictive Parity Difference",
+    "Disparate Impact (Ratio)"
+  ),
+  Value = c(
+  
+    demographic_parity$Positive_Prediction_Rate[demographic_parity$SexLabel == "Female"] - 
       demographic_parity$Positive_Prediction_Rate[demographic_parity$SexLabel == "Male"],
-      demographic_parity$Positive_Prediction_Rate[demographic_parity$SexLabel == "Female"],
+    
+
+    equal_opportunity$True_Positive_Rate[equal_opportunity$SexLabel == "Female"] - 
       equal_opportunity$True_Positive_Rate[equal_opportunity$SexLabel == "Male"],
-      equal_opportunity$True_Positive_Rate[equal_opportunity$SexLabel == "Female"],
-      predictive_parity$Precision[predictive_parity$SexLabel == "Male"], 
-      predictive_parity$Precision[predictive_parity$SexLabel == "Female"], 
-      disparate_impact
-    )
+ 
+    predictive_parity$Precision[predictive_parity$SexLabel == "Female"] - 
+      predictive_parity$Precision[predictive_parity$SexLabel == "Male"],
+    
+
+    disparate_impact
+  )
 )
-fairness_summary
+
+print(fairness_summary)
+
+
+ggplot(results, aes(x = k, y = Accuracy)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(color = "darkblue", size = 3) +
+  labs(title = "Weighted KNN: Accuracy vs. K Value",
+       subtitle = "Validation Set Performance",
+       x = "Number of Neighbors (k)",
+       y = "Accuracy") +
+  theme_minimal() +
+  scale_x_continuous(breaks = k_values)
+
+
+results$Error_Rate <- 1 - results$Accuracy
+
+
+results$Error_Rate <- 1 - results$Accuracy
+
+
+ggplot(results, aes(x = k, y = Error_Rate)) +
+  geom_line(color = "firebrick", linewidth = 1) + 
+  geom_point(color = "darkred", size = 3) +
+  labs(title = "Elbow Plot: Error Rate vs. K",
+       subtitle = "The 'elbow' represents the optimal balance of K",
+       x = "Number of Neighbors (k)",
+       y = "Classification Error (1 - Accuracy)") +
+  theme_minimal() +
+  scale_x_continuous(breaks = results$k)
+
+
+results$Distance <- "Euclidean (p=2)"
+results_manhattan$Distance <- "Manhattan (p=1)"
+combined_results <- rbind(results[, c("k", "Accuracy", "Distance")], 
+                          results_manhattan[, c("k", "Accuracy", "Distance")])
+
+ggplot(combined_results, aes(x = k, y = Accuracy, color = Distance)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  labs(title = "KNN Performance Comparison",
+       x = "k Value",
+       y = "Accuracy") +
+  theme_light() +
+  scale_x_continuous(breaks = k_values)
+
+
+table(athletes$Sex)
+
+table(winter_data$Sex)
