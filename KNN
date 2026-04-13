@@ -1,3 +1,4 @@
+Macros's code for standard knn
 
 data <- read.csv("athlete_events.csv")
 
